@@ -89,6 +89,64 @@ def normalize_library(library, norm_params):
     return np.array(norm_rows)
 
 
+# ANOMALY DETECTION - Check if sensor readings are outside training range
+def detect_anomaly(query_values, norm_params):
+    """
+    Detects if any sensor reading is outside the training data range.
+    Returns: (is_anomaly, anomaly_report)
+    """
+    anomalies = []
+    
+    for feature in Features:
+        val = query_values[feature]
+        mn = norm_params[feature]['min']
+        mx = norm_params[feature]['max']
+        
+        # Calculate how far outside the range (as percentage)
+        if val < mn:
+            percent_off = ((mn - val) / mn) * 100 if mn != 0 else float('inf')
+            anomalies.append({
+                'feature': feature,
+                'value': val,
+                'min': mn,
+                'max': mx,
+                'deviation': f"{percent_off:.1f}% below minimum",
+                'severity': 'HIGH' if percent_off > 50 else 'MEDIUM'
+            })
+        elif val > mx:
+            percent_off = ((val - mx) / mx) * 100 if mx != 0 else float('inf')
+            anomalies.append({
+                'feature': feature,
+                'value': val,
+                'min': mn,
+                'max': mx,
+                'deviation': f"{percent_off:.1f}% above maximum",
+                'severity': 'HIGH' if percent_off > 50 else 'MEDIUM'
+            })
+    
+    is_anomaly = len(anomalies) > 0
+    
+    # Generate anomaly report
+    if is_anomaly:
+        report = "\n" + "!" * 52
+        report += "\n  ⚠  ANOMALY DETECTED  ⚠"
+        report += "\n  Sensor readings outside training range!"
+        report += "\n" + "!" * 52
+        for a in anomalies:
+            report += f"\n  • {a['feature']}"
+            report += f"\n    Value: {a['value']:.3f}"
+            report += f"\n    Range: [{a['min']:.3f}, {a['max']:.3f}]"
+            report += f"\n    Status: {a['deviation']}"
+            report += f"\n    Severity: {a['severity']}"
+        report += "\n" + "!" * 52
+        report += "\n  RECOMMENDATION: Manual inspection required!"
+        report += "\n  CBR results may be unreliable for this input."
+        report += "\n" + "!" * 52 + "\n"
+        return True, report, anomalies
+    else:
+        return False, "All sensors within normal range.", None
+
+
 # Retrieve
 def retrieve_top_k(library, norm_library, query_values, norm_params, k=K):
     weights = np.array([Feautres_Weight[f] for f in Features])
@@ -163,6 +221,8 @@ def generate_report(
     rule_name,
     confidence,
     was_retained,
+    is_anomaly=False,
+    anomaly_report=None,
     report_dir=REPORT_DIR
 ):
     # Create reports folder if it doesn't exist
@@ -200,6 +260,16 @@ def generate_report(
     lines.append("=" * 56)
     row("Generated", ts.strftime("%Y-%m-%d  %H:%M:%S"))
     row("Report file", filename)
+
+    # ANOMALY WARNING (if detected)
+    if is_anomaly:
+        lines.append("")
+        lines.append("!" * 56)
+        lines.append("  ⚠  ANOMALY DETECTED - RESULTS MAY BE UNRELIABLE  ⚠")
+        lines.append("!" * 56)
+        if anomaly_report:
+            lines.append(anomaly_report)
+        lines.append("!" * 56)
 
     # Stage 1 — Sensor input
     section("STAGE 1 — SENSOR READINGS (Query)")
@@ -247,10 +317,15 @@ def generate_report(
     row("Severity", severity)
     row("Confidence", f"{confidence * 100:.1f}%")
     row("Method", "Rule override" if was_revised else "CBR majority vote")
+    if is_anomaly:
+        row("⚠ CAUTION", "Anomalous input - diagnosis may be invalid")
 
     # Stage 5 — Retain
     section("STAGE 5 — RETAIN")
-    if was_retained:
+    if is_anomaly:
+        row("Status", "NOT SAVED - Anomalous case rejected")
+        row("Reason", "Input outside training range - requires validation")
+    elif was_retained:
         row("Status", "Case saved to library")
         row("Label retained", f"{final_label}  —  {Fault_Map[final_label]}")
     else:
@@ -258,12 +333,18 @@ def generate_report(
 
     # Recommended action
     section("RECOMMENDED ACTION")
-    actions = {
-        0: "No action required. Continue normal monitoring.",
-        1: "Inspect bearings and mechanical components. Schedule maintenance.",
-        2: "Check cooling system immediately. Reduce load if temperature persists.",
-    }
-    lines.append(f"  {actions.get(final_label, 'Consult engineer.')}")
+    if is_anomaly:
+        lines.append("  🚨 IMMEDIATE ACTION REQUIRED:")
+        lines.append("     1. Verify sensor calibration")
+        lines.append("     2. Inspect equipment manually")
+        lines.append("     3. Do not rely on automated diagnosis")
+    else:
+        actions = {
+            0: "No action required. Continue normal monitoring.",
+            1: "Inspect bearings and mechanical components. Schedule maintenance.",
+            2: "Check cooling system immediately. Reduce load if temperature persists.",
+        }
+        lines.append(f"  {actions.get(final_label, 'Consult engineer.')}")
 
     # Footer
     lines.append("")
@@ -280,7 +361,7 @@ def generate_report(
     return filepath
 
 
-# DIAGNOSE FUNCTION - Main diagnosis function with report generation
+# DIAGNOSE FUNCTION - Main diagnosis function with anomaly detection & report generation
 def diagnose(library, norm_library, norm_params, query_values, retain=False):
     print("\n" + "=" * 52)
     print("  SENSOR READINGS")
@@ -288,7 +369,15 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
     for f, v in query_values.items():
         print(f"  {f:<28} {v}")
 
-    # RETRIEVE
+    # ANOMALY DETECTION - Check inputs before retrieval
+    is_anomaly, anomaly_msg, anomaly_details = detect_anomaly(query_values, norm_params)
+    
+    if is_anomaly:
+        print(anomaly_msg)
+        print("\n  ⚠  Continuing with diagnosis, but results may be unreliable.")
+        print("  Recommendation: Manual inspection required!\n")
+
+    # RETRIEVE (still runs, but with warning)
     top_cases, distances, confidence = retrieve_top_k(
         library, norm_library, query_values, norm_params
     )
@@ -314,18 +403,25 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
 
     if confidence < 0.4:
         print("  ⚠  Low confidence — consider manual inspection")
+    
+    if is_anomaly:
+        print("  ⚠⚠  ANOMALOUS INPUT - Diagnosis may be invalid!  ⚠⚠")
 
     print("-" * 52)
 
-    # RETAIN
+    # RETAIN (skip if anomaly detected)
     was_retained = False
     if retain:
-        library, was_retained = retain_new_case(
-            library, query_values, final_label, FILE_PATH
-        )
-        # Recompute normalization and library after retain
-        norm_params = compute_normalization_params(library)
-        norm_library = normalize_library(library, norm_params)
+        if is_anomaly:
+            print("[RETAIN] Skipped - Anomalous case not saved to library.")
+            print("         Manual review required before adding to knowledge base.")
+        else:
+            library, was_retained = retain_new_case(
+                library, query_values, final_label, FILE_PATH
+            )
+            # Recompute normalization and library after retain
+            norm_params = compute_normalization_params(library)
+            norm_library = normalize_library(library, norm_params)
 
     # GENERATE REPORT - Full audit trail
     generate_report(
@@ -338,6 +434,8 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
         rule_name=rule_name,
         confidence=confidence,
         was_retained=was_retained,
+        is_anomaly=is_anomaly,
+        anomaly_report=anomaly_msg if is_anomaly else None,
     )
 
     return library, norm_library, norm_params, final_label
@@ -522,6 +620,40 @@ def print_library_stats(library):
         print(f"  {f:<28}  min={mn:.2f}  max={mx:.2f}  mean={mean:.2f}")
 
 
+# DEMO FUNCTION - Shows anomaly detection in action
+def demo_anomaly_detection(library, norm_params, norm_lib):
+    print("\n" + "=" * 70)
+    print("  ANOMALY DETECTION DEMO")
+    print("=" * 70)
+    
+    # Normal test case (within range)
+    print("\n▶ TEST 1: Normal input (within training range)")
+    normal_query = {
+        Features[0]: 0.85,  # Vibration - within range
+        Features[1]: 115.2, # Temperature - within range  
+        Features[2]: 8.1    # Pressure - within range
+    }
+    diagnose(library, norm_lib, norm_params, normal_query, retain=False)
+    
+    # Anomaly test case (outside range)
+    print("\n\n▶ TEST 2: Anomalous input (outside training range)")
+    anomaly_query = {
+        Features[0]: 9.0,   # Vibration - WAY outside range!
+        Features[1]: 115.2, # Temperature - normal
+        Features[2]: 8.1    # Pressure - normal
+    }
+    diagnose(library, norm_lib, norm_params, anomaly_query, retain=False)
+    
+    # Multiple anomalies
+    print("\n\n▶ TEST 3: Multiple anomalies")
+    multi_anomaly = {
+        Features[0]: 9.0,   # Vibration - extreme
+        Features[1]: 250.0, # Temperature - extreme
+        Features[2]: 2.0    # Pressure - below minimum
+    }
+    diagnose(library, norm_lib, norm_params, multi_anomaly, retain=False)
+
+
 # ─────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────
@@ -537,12 +669,29 @@ if __name__ == "__main__":
     norm_params = compute_normalization_params(df)
     norm_lib = normalize_library(df, norm_params)
 
+    # Print normal ranges for reference
+    print("\n" + "=" * 52)
+    print("  NORMAL OPERATING RANGES (from training data)")
+    print("=" * 52)
+    for f in Features:
+        print(f"  {f:<28} [{norm_params[f]['min']:.2f}, {norm_params[f]['max']:.2f}]")
+    
+    # Optional: Run anomaly detection demo
+    print("\n" + "=" * 52)
+    choice = input("Run anomaly detection demo? (y/n): ").lower()
+    if choice == 'y':
+        demo_anomaly_detection(df, norm_params, norm_lib)
+    
     # Single diagnosis examples
+    print("\n" + "=" * 52)
+    print("  RUNNING STANDARD DIAGNOSES")
+    print("=" * 52)
+    
     test_cases = [
-        {Features[0]: 0.85, Features[1]: 115.2, Features[2]: 8.1},
-        {Features[0]: 2.8, Features[1]: 72.0, Features[2]: 6.5},
-        {Features[0]: 0.4, Features[1]: 145.0, Features[2]: 9.2},
-        {Features[0]: 0.2, Features[1]: 60.0, Features[2]: 7.0},
+        {Features[0]: 0.85, Features[1]: 115.2, Features[2]: 8.1},   # Normal
+        {Features[0]: 2.8,  Features[1]: 72.0,  Features[2]: 6.5},   # High vibration
+        {Features[0]: 0.4,  Features[1]: 145.0, Features[2]: 9.2},   # Overheating
+        {Features[0]: 0.2,  Features[1]: 60.0,  Features[2]: 7.0},   # Normal
     ]
 
     for query in test_cases:
