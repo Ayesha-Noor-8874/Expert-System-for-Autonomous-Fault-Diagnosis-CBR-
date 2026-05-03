@@ -186,7 +186,7 @@ def retain_new_case(library, query_values, fault_label, path, tolerance=0.01):
 
     if distances.min() < tolerance:
         print("[RETAIN] Case too similar to existing entry — skipped.")
-        return library, False  # Return library and was_retained=False
+        return library, False
 
     new_row = {
         'Timestamp': pd.Timestamp.now(),
@@ -197,7 +197,7 @@ def retain_new_case(library, query_values, fault_label, path, tolerance=0.01):
     updated = pd.concat([library, pd.DataFrame([new_row])], ignore_index=True)
     updated.to_csv(path, index=False)
     print(f"[RETAIN] New case saved. Library now has {len(updated)} cases.")
-    return updated, True  # Return updated library and was_retained=True
+    return updated, True
 
 
 def reuse_majority_vote(top_cases):
@@ -207,8 +207,6 @@ def reuse_majority_vote(top_cases):
 
 # ─────────────────────────────────────────────
 #  GENERATE REPORT FUNCTION
-#  Saves a full audit trail of one CBR diagnosis
-#  cycle to a timestamped .txt file.
 # ─────────────────────────────────────────────
 
 def generate_report(
@@ -225,16 +223,13 @@ def generate_report(
     anomaly_report=None,
     report_dir=REPORT_DIR
 ):
-    # Create reports folder if it doesn't exist
     os.makedirs(report_dir, exist_ok=True)
 
-    # Timestamped filename
     ts = datetime.now()
     ts_str = ts.strftime("%Y%m%d_%H%M%S")
     filename = f"cbr_report_{ts_str}.txt"
     filepath = os.path.join(report_dir, filename)
 
-    # Severity flag
     if final_label == 0:
         severity = "LOW    — Normal operation"
     elif final_label == 1:
@@ -242,7 +237,6 @@ def generate_report(
     else:
         severity = "HIGH   — Thermal fault detected"
 
-    # Build report lines
     lines = []
 
     def section(title):
@@ -254,14 +248,12 @@ def generate_report(
     def row(label, value):
         lines.append(f"  {label:<28} {value}")
 
-    # Header
     lines.append("=" * 56)
     lines.append("  CBR EXPERT SYSTEM — FAULT DIAGNOSIS REPORT")
     lines.append("=" * 56)
     row("Generated", ts.strftime("%Y-%m-%d  %H:%M:%S"))
     row("Report file", filename)
 
-    # ANOMALY WARNING (if detected)
     if is_anomaly:
         lines.append("")
         lines.append("!" * 56)
@@ -271,12 +263,10 @@ def generate_report(
             lines.append(anomaly_report)
         lines.append("!" * 56)
 
-    # Stage 1 — Sensor input
     section("STAGE 1 — SENSOR READINGS (Query)")
     for feature, value in query_values.items():
         row(feature, f"{value:.4f}")
 
-    # Stage 2 — Retrieve
     section("STAGE 2 — RETRIEVE  (top-k similar cases)")
     row("Cases searched", "full library")
     row("k neighbours", str(len(top_cases)))
@@ -293,7 +283,6 @@ def generate_report(
         row("  Fault label", f"{label}  —  {label_str}")
         lines.append("")
 
-    # Stage 3 — Reuse
     section("STAGE 3 — REUSE  (majority vote)")
     suggested_str = Fault_Map.get(suggested_label, "Unknown")
     row("Suggested label", f"{suggested_label}  —  {suggested_str}")
@@ -301,7 +290,6 @@ def generate_report(
     if confidence < 0.4:
         row("WARNING", "Low confidence — manual inspection advised")
 
-    # Stage 4 — Revise
     section("STAGE 4 — REVISE  (rule-based check)")
     if was_revised:
         row("Rule triggered", rule_name)
@@ -310,7 +298,6 @@ def generate_report(
     else:
         row("Rule triggered", "None — CBR result accepted")
 
-    # Final diagnosis
     section("FINAL DIAGNOSIS")
     row("Fault label", f"{final_label}")
     row("Condition", Fault_Map.get(final_label, "Unknown"))
@@ -320,7 +307,6 @@ def generate_report(
     if is_anomaly:
         row("⚠ CAUTION", "Anomalous input - diagnosis may be invalid")
 
-    # Stage 5 — Retain
     section("STAGE 5 — RETAIN")
     if is_anomaly:
         row("Status", "NOT SAVED - Anomalous case rejected")
@@ -331,7 +317,6 @@ def generate_report(
     else:
         row("Status", "Case NOT saved (too similar to existing entry)")
 
-    # Recommended action
     section("RECOMMENDED ACTION")
     if is_anomaly:
         lines.append("  🚨 IMMEDIATE ACTION REQUIRED:")
@@ -346,14 +331,12 @@ def generate_report(
         }
         lines.append(f"  {actions.get(final_label, 'Consult engineer.')}")
 
-    # Footer
     lines.append("")
     lines.append("=" * 56)
     lines.append("  END OF REPORT")
     lines.append("=" * 56)
     lines.append("")
 
-    # Write to file
     with open(filepath, 'w') as f:
         f.write('\n'.join(lines))
 
@@ -361,7 +344,7 @@ def generate_report(
     return filepath
 
 
-# DIAGNOSE FUNCTION - Main diagnosis function with anomaly detection & report generation
+# DIAGNOSE FUNCTION
 def diagnose(library, norm_library, norm_params, query_values, retain=False):
     print("\n" + "=" * 52)
     print("  SENSOR READINGS")
@@ -369,7 +352,6 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
     for f, v in query_values.items():
         print(f"  {f:<28} {v}")
 
-    # ANOMALY DETECTION - Check inputs before retrieval
     is_anomaly, anomaly_msg, anomaly_details = detect_anomaly(query_values, norm_params)
     
     if is_anomaly:
@@ -377,7 +359,6 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
         print("\n  ⚠  Continuing with diagnosis, but results may be unreliable.")
         print("  Recommendation: Manual inspection required!\n")
 
-    # RETRIEVE (still runs, but with warning)
     top_cases, distances, confidence = retrieve_top_k(
         library, norm_library, query_values, norm_params
     )
@@ -387,13 +368,9 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
         label = Fault_Map.get(int(row['Fault Label']), 'Unknown')
         print(f"    [{i+1}] dist={distances[i]:.4f}  →  {label}  ({row['Timestamp']})")
 
-    # REUSE
     suggested_label = reuse_majority_vote(top_cases)
-
-    # REVISE
     final_label, was_revised, rule_name = revise(suggested_label, query_values)
 
-    # Display result
     print("\n" + "-" * 52)
     if was_revised:
         print(f"  [REVISE] Rule triggered: '{rule_name}'")
@@ -409,7 +386,6 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
 
     print("-" * 52)
 
-    # RETAIN (skip if anomaly detected)
     was_retained = False
     if retain:
         if is_anomaly:
@@ -419,11 +395,9 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
             library, was_retained = retain_new_case(
                 library, query_values, final_label, FILE_PATH
             )
-            # Recompute normalization and library after retain
             norm_params = compute_normalization_params(library)
             norm_library = normalize_library(library, norm_params)
 
-    # GENERATE REPORT - Full audit trail
     generate_report(
         query_values=query_values,
         top_cases=top_cases,
@@ -439,6 +413,248 @@ def diagnose(library, norm_library, norm_params, query_values, retain=False):
     )
 
     return library, norm_library, norm_params, final_label
+
+
+# FAST EVALUATION (no plots, just accuracy)
+def evaluate_fast(library):
+    shuffled_lib = library.sample(frac=1, random_state=42).reset_index(drop=True)
+    split = int(len(shuffled_lib) * 0.8)
+    train_lib = shuffled_lib.iloc[:split].reset_index(drop=True)
+    test_lib = shuffled_lib.iloc[split:].reset_index(drop=True)
+    
+    norm_params = compute_normalization_params(train_lib)
+    norm_train = normalize_library(train_lib, norm_params)
+    
+    y_true, y_pred = [], []
+    
+    for _, row in test_lib.iterrows():
+        query = {f: row[f] for f in Features}
+        top_cases, _, _ = retrieve_top_k(train_lib, norm_train, query, norm_params)
+        suggested = reuse_majority_vote(top_cases)
+        final, _, _ = revise(suggested, query)
+        y_true.append(int(row['Fault Label']))
+        y_pred.append(final)
+    
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    accuracy = np.mean(y_true == y_pred) * 100
+    
+    return accuracy
+
+
+# FIND OPTIMAL K VALUE
+def find_optimal_k(library, max_k=10):
+    print("\n" + "=" * 70)
+    print("  OPTIMAL K VALUE ANALYSIS")
+    print("  Testing k=1 through k={}".format(max_k))
+    print("=" * 70)
+    
+    results = {}
+    k_values = range(1, max_k + 1)
+    
+    global K
+    original_k = K
+    
+    for k in k_values:
+        print(f"\n  Testing k={k}...")
+        K = k
+        accuracy = evaluate_fast(library)
+        results[k] = accuracy
+        print(f"    → Accuracy: {accuracy:.2f}%")
+    
+    K = original_k
+    
+    best_k = max(results, key=results.get)
+    best_accuracy = results[best_k]
+    
+    print("\n" + "-" * 70)
+    print("  SUMMARY")
+    print("-" * 70)
+    for k in k_values:
+        marker = " ★ BEST" if k == best_k else ""
+        print(f"  k={k:<3}  →  Accuracy: {results[k]:6.2f}%{marker}")
+    print("-" * 70)
+    print(f"\n  Best K Value: {best_k} (Accuracy: {best_accuracy:.2f}%)")
+    print(f"  Current K: {original_k}")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(list(results.keys()), list(results.values()), 
+            marker='o', linewidth=2, markersize=8, color='steelblue')
+    ax.set_xlabel('K Value (Number of Neighbors)', fontsize=12)
+    ax.set_ylabel('Accuracy (%)', fontsize=12)
+    ax.set_title('Optimal K Value Selection for CBR System', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(k_values)
+    ax.scatter(best_k, best_accuracy, color='red', s=150, zorder=5, 
+               label=f'Best K={best_k} ({best_accuracy:.1f}%)')
+    ax.legend()
+    
+    for k, acc in results.items():
+        ax.annotate(f'{acc:.1f}%', (k, acc), textcoords="offset points", 
+                   xytext=(0, 10), ha='center', fontsize=9)
+    
+    plt.tight_layout()
+    plt.savefig("optimal_k_analysis.png", dpi=150)
+    print(f"\n  Plot saved as: optimal_k_analysis.png")
+    plt.show()
+    
+    return best_k, results
+
+
+# COMPARE SIMILARITY METRICS
+def compare_similarity_metrics(library):
+    print("\n" + "=" * 70)
+    print("  SIMILARITY METRICS COMPARISON")
+    print("  Euclidean vs Cosine vs Manhattan Distance")
+    print("=" * 70)
+    
+    results = {}
+    
+    def euclidean_distance(vec1, vec2, weights):
+        diff = vec1 - vec2
+        return np.sqrt((diff ** 2 * weights).sum())
+    
+    def cosine_distance(vec1, vec2, weights):
+        vec1_w = vec1 * np.sqrt(weights)
+        vec2_w = vec2 * np.sqrt(weights)
+        dot_product = np.dot(vec1_w, vec2_w)
+        norm1 = np.linalg.norm(vec1_w)
+        norm2 = np.linalg.norm(vec2_w)
+        if norm1 == 0 or norm2 == 0:
+            return 1.0
+        similarity = dot_product / (norm1 * norm2)
+        return 1 - similarity
+    
+    def manhattan_distance(vec1, vec2, weights):
+        return np.sum(np.abs(vec1 - vec2) * weights)
+    
+    metrics = {
+        'Euclidean': euclidean_distance,
+        'Cosine': cosine_distance,
+        'Manhattan': manhattan_distance
+    }
+    
+    original_retrieve = retrieve_top_k
+    
+    for metric_name, distance_func in metrics.items():
+        print(f"\n  Testing {metric_name} distance...")
+        
+        def retrieve_with_metric(library, norm_library, query_values, norm_params, k=K):
+            weights = np.array([Feautres_Weight[f] for f in Features])
+            query_norm = normalize(query_values, norm_params)
+            distances = np.array([
+                distance_func(query_norm, case_norm, weights) 
+                for case_norm in norm_library
+            ])
+            top_k_indices = np.argsort(distances)[:k]
+            top_cases = library.iloc[top_k_indices].copy()
+            top_distances = distances[top_k_indices]
+            confidence = 1.0 / (1.0 + top_distances[0])
+            return top_cases, top_distances, confidence
+        
+        globals()['retrieve_top_k'] = retrieve_with_metric
+        accuracy = evaluate_fast(library)
+        results[metric_name] = accuracy
+        print(f"    → Accuracy: {accuracy:.2f}%")
+    
+    globals()['retrieve_top_k'] = original_retrieve
+    
+    print("\n" + "-" * 70)
+    print("  COMPARISON RESULTS")
+    print("-" * 70)
+    print(f"  {'Metric':<15} {'Accuracy':<15} {'Rank':<10}")
+    print("-" * 70)
+    
+    sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
+    for rank, (metric, accuracy) in enumerate(sorted_results, 1):
+        print(f"  {metric:<15} {accuracy:>6.2f}%{'':<8} #{rank}")
+    
+    print("-" * 70)
+    
+    best_metric = max(results, key=results.get)
+    best_accuracy = results[best_metric]
+    
+    print(f"\n  Best Similarity Metric: {best_metric}")
+    print(f"  (Accuracy: {best_accuracy:.2f}%)")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    metrics_list = list(results.keys())
+    accuracies = list(results.values())
+    colors = ['#2ecc71' if i == np.argmax(accuracies) else '#e74c3c' for i in range(len(metrics_list))]
+    bars = ax.bar(metrics_list, accuracies, color=colors, edgecolor='black', linewidth=1.5)
+    
+    for bar, acc in zip(bars, accuracies):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{acc:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=11)
+    
+    ax.set_ylabel('Accuracy (%)', fontsize=12)
+    ax.set_xlabel('Similarity Metric', fontsize=12)
+    ax.set_title('Comparison of Similarity Metrics for CBR System', fontsize=14, fontweight='bold')
+    ax.set_ylim(0, 105)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    best_idx = np.argmax(accuracies)
+    ax.text(best_idx, accuracies[best_idx] - 15, '★ BEST', 
+            ha='center', fontsize=12, fontweight='bold', color='white',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='green', alpha=0.7))
+    
+    plt.tight_layout()
+    plt.savefig("similarity_metrics_comparison.png", dpi=150)
+    print(f"\n  Plot saved as: similarity_metrics_comparison.png")
+    plt.show()
+    
+    return results, best_metric
+
+
+# COMPREHENSIVE ANALYSIS
+def run_comprehensive_analysis(library):
+    print("\n" + "=" * 70)
+    print("  CBR SYSTEM COMPREHENSIVE ANALYSIS")
+    print("  Optimizing Parameters for Fault Diagnosis")
+    print("=" * 70)
+    
+    print("\n" + "=" * 70)
+    best_k, k_results = find_optimal_k(library, max_k=10)
+    
+    print("\n" + "=" * 70)
+    metric_results, best_metric = compare_similarity_metrics(library)
+    
+    print("\n" + "=" * 70)
+    print("  FINAL RECOMMENDATIONS")
+    print("=" * 70)
+    print(f"\n  Best K Value: {best_k}")
+    print(f"  Best Similarity Metric: {best_metric}")
+    print(f"\n  Current Configuration: K={K}, Euclidean distance")
+    print(f"\n  Recommended Changes:")
+    print(f"    - Set K = {best_k}")
+    print(f"    - Use {best_metric} distance")
+    
+    with open("cbr_optimization_analysis.txt", "w") as f:
+        f.write("=" * 70 + "\n")
+        f.write("CBR SYSTEM OPTIMIZATION ANALYSIS\n")
+        f.write("=" * 70 + "\n\n")
+        
+        f.write("K-VALUE OPTIMIZATION RESULTS:\n")
+        f.write("-" * 40 + "\n")
+        for k, acc in k_results.items():
+            f.write(f"k={k}: {acc:.2f}%\n")
+        f.write(f"\nBest K: {best_k} (Accuracy: {k_results[best_k]:.2f}%)\n\n")
+        
+        f.write("SIMILARITY METRICS COMPARISON:\n")
+        f.write("-" * 40 + "\n")
+        for metric, acc in metric_results.items():
+            f.write(f"{metric}: {acc:.2f}%\n")
+        f.write(f"\nBest Metric: {best_metric} (Accuracy: {metric_results[best_metric]:.2f}%)\n\n")
+        
+        f.write("RECOMMENDATIONS:\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"1. Change K from {K} to {best_k}\n")
+        f.write(f"2. Use {best_metric} distance for similarity calculation\n")
+    
+    print("\n  Analysis saved to: cbr_optimization_analysis.txt")
+    
+    return best_k, best_metric
 
 
 # Evaluation
@@ -484,7 +700,6 @@ def evaluate(library):
         row_str = "  ".join([f"{cm[i][j]:>6}" for j in range(n)])
         print(f"  Actual {l}  :  {row_str}")
 
-    # Per-class metrics
     print("\n  Per-class metrics:")
     for i, l in enumerate(labels):
         tp = cm[i][i]
@@ -497,7 +712,6 @@ def evaluate(library):
         print(f"    Fault {l} ({Fault_Map[l][:30]:<30})"
               f"  P={precision:.2f}  R={recall:.2f}  F1={f1:.2f}")
 
-    # Plot confusion matrix
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(cm, cmap='Blues')
     ax.set_xticks(range(n))
@@ -519,7 +733,7 @@ def evaluate(library):
     return accuracy
 
 
-# SIMULATION MODE (loops through CSV rows)
+# SIMULATION MODE
 def simulate(library, n_rows=20, delay=0.5):
     print("\n" + "=" * 52)
     print(f"  SIMULATION MODE  ({n_rows} readings, {delay}s interval)")
@@ -553,7 +767,6 @@ def simulate(library, n_rows=20, delay=0.5):
 
         time.sleep(delay)
 
-    # Trend chart
     hist_df = pd.DataFrame(history)
 
     fig, axes = plt.subplots(3, 1, figsize=(10, 7), sharex=True)
@@ -578,7 +791,6 @@ def simulate(library, n_rows=20, delay=0.5):
     axes[2].set_xlabel('Reading #')
     axes[2].set_title('Pressure')
 
-    # Legend
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker='o', color='w', markerfacecolor='green', label='Normal', markersize=8),
@@ -620,47 +832,40 @@ def print_library_stats(library):
         print(f"  {f:<28}  min={mn:.2f}  max={mx:.2f}  mean={mean:.2f}")
 
 
-# DEMO FUNCTION - Shows anomaly detection in action
+# DEMO FUNCTION
 def demo_anomaly_detection(library, norm_params, norm_lib):
     print("\n" + "=" * 70)
     print("  ANOMALY DETECTION DEMO")
     print("=" * 70)
     
-    # Normal test case (within range)
     print("\n▶ TEST 1: Normal input (within training range)")
     normal_query = {
-        Features[0]: 0.85,  # Vibration - within range
-        Features[1]: 115.2, # Temperature - within range  
-        Features[2]: 8.1    # Pressure - within range
+        Features[0]: 0.85,
+        Features[1]: 115.2,
+        Features[2]: 8.1
     }
     diagnose(library, norm_lib, norm_params, normal_query, retain=False)
     
-    # Anomaly test case (outside range)
     print("\n\n▶ TEST 2: Anomalous input (outside training range)")
     anomaly_query = {
-        Features[0]: 9.0,   # Vibration - WAY outside range!
-        Features[1]: 115.2, # Temperature - normal
-        Features[2]: 8.1    # Pressure - normal
+        Features[0]: 9.0,
+        Features[1]: 115.2,
+        Features[2]: 8.1
     }
     diagnose(library, norm_lib, norm_params, anomaly_query, retain=False)
     
-    # Multiple anomalies
     print("\n\n▶ TEST 3: Multiple anomalies")
     multi_anomaly = {
-        Features[0]: 9.0,   # Vibration - extreme
-        Features[1]: 250.0, # Temperature - extreme
-        Features[2]: 2.0    # Pressure - below minimum
+        Features[0]: 9.0,
+        Features[1]: 250.0,
+        Features[2]: 2.0
     }
     diagnose(library, norm_lib, norm_params, multi_anomaly, retain=False)
 
 
-# ─────────────────────────────────────────────
-#  MAIN
-# ─────────────────────────────────────────────
-
+# MAIN
 if __name__ == "__main__":
 
-    # Load
     df = load_case_library(FILE_PATH)
     print_library_stats(df)
 
@@ -669,29 +874,31 @@ if __name__ == "__main__":
     norm_params = compute_normalization_params(df)
     norm_lib = normalize_library(df, norm_params)
 
-    # Print normal ranges for reference
     print("\n" + "=" * 52)
     print("  NORMAL OPERATING RANGES (from training data)")
     print("=" * 52)
     for f in Features:
         print(f"  {f:<28} [{norm_params[f]['min']:.2f}, {norm_params[f]['max']:.2f}]")
     
-    # Optional: Run anomaly detection demo
     print("\n" + "=" * 52)
     choice = input("Run anomaly detection demo? (y/n): ").lower()
     if choice == 'y':
         demo_anomaly_detection(df, norm_params, norm_lib)
     
-    # Single diagnosis examples
+    print("\n" + "=" * 52)
+    choice2 = input("Run comprehensive optimization analysis? (y/n): ").lower()
+    if choice2 == 'y':
+        best_k, best_metric = run_comprehensive_analysis(df)
+    
     print("\n" + "=" * 52)
     print("  RUNNING STANDARD DIAGNOSES")
     print("=" * 52)
     
     test_cases = [
-        {Features[0]: 0.85, Features[1]: 115.2, Features[2]: 8.1},   # Normal
-        {Features[0]: 2.8,  Features[1]: 72.0,  Features[2]: 6.5},   # High vibration
-        {Features[0]: 0.4,  Features[1]: 145.0, Features[2]: 9.2},   # Overheating
-        {Features[0]: 0.2,  Features[1]: 60.0,  Features[2]: 7.0},   # Normal
+        {Features[0]: 0.85, Features[1]: 115.2, Features[2]: 8.1},
+        {Features[0]: 2.8,  Features[1]: 72.0,  Features[2]: 6.5},
+        {Features[0]: 0.4,  Features[1]: 145.0, Features[2]: 9.2},
+        {Features[0]: 0.2,  Features[1]: 60.0,  Features[2]: 7.0},
     ]
 
     for query in test_cases:
@@ -699,8 +906,5 @@ if __name__ == "__main__":
             df, norm_lib, norm_params, query, retain=True
         )
 
-    # Evaluation
     evaluate(df)
-
-    # Simulation (replay 20 rows from CSV)
     simulate(df, n_rows=20, delay=0.3)
